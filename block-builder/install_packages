@@ -1,0 +1,51 @@
+#!/bin/bash
+[ "${VERBOSE}" = "verbose" ] && set -x
+
+destdir="${1:-"/block"}"
+
+if [ -z "${PACKAGES}" ]; then
+	# shellcheck disable=SC1091
+	. /scripts/automation/include/balena-lib.inc
+	echo "Looking for contract for ${MACHINE}: ${BLOCK}"
+	PACKAGES=$(balena_lib_contract_fetch_composedOf_list "${BLOCK}" "${MACHINE}")
+	if [ -z "${PACKAGES}" ]; then
+		echo "No packages found for ${BLOCK}"
+		exit 1
+	fi
+fi
+echo "Installing: ${PACKAGES}"
+
+find "/ipk"
+
+if [ ! -f "/ipk/Packages" ]; then
+	echo "No package feed"
+	exit 1
+fi
+while IFS=\$'\n' read -r dir; do
+	if [ -z "${ARCH_LIST}" ]; then
+		ARCH_LIST="${dir}"
+	else
+		ARCH_LIST="${ARCH_LIST} ${dir}"
+		fi
+done< <(find "/ipk" -mindepth 1 -maxdepth 1 -type d | xargs -I{} basename {})
+echo "Architecture list: ${ARCH_LIST}"
+
+FEED_URL="file:/ipk"
+priority=1;
+for arch in $ARCH_LIST; do
+	echo "arch $arch $priority" >> /etc/opkg/opkg.conf
+	# shellcheck disable=SC2003
+	priority=$(expr $priority + 5)
+	echo "src/gz balena-$arch $FEED_URL/$arch" >> /etc/opkg/opkg.conf
+done
+
+echo "dest block /block" >> /etc/opkg/opkg.conf
+if opkg -f /etc/opkg/opkg.conf update; then
+	mkdir -p "${destdir}"
+	# shellcheck disable=SC2086
+	if ! opkg -f /etc/opkg/opkg.conf --nodeps --dest="$(basename ${destdir})" install ${PACKAGES}; then
+		echo "Failed in package installation"
+		exit 1
+	fi
+fi
+rm -rf ${destdir}/var/lib/opkg
